@@ -16,7 +16,7 @@ st.set_page_config(
 create_tables()
 
 # Streamlit App Interface
-st.title("Voice Identification Web App")
+st.title("Voice identification Portal")
 
 # Upload Picture and Voice
 st.subheader("Register a New User")
