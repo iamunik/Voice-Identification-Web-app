@@ -24,6 +24,7 @@ st.subheader("Register a New User")
 
 col1, col2 = st.columns(2)
 
+# collect input for new registration
 with col1:
     first_name = st.text_input("First name")
     other_name = st.text_input("other name")
@@ -34,7 +35,7 @@ with col1:
     phone = st.text_input("Phone number")
 
 with col2:
-    about = st.text_area("Tell me about yourself")      # REMOVE FROM DB what to replace it wth?
+    about = st.text_area("Tell me about yourself")
     sex = st.radio("Gender", ['Male', 'Female'])
     occupation = st.radio("Employment Status", ['Student', 'Self-employed', 'Freelance'])
     marital_status = st.radio("Marital status", ['Single', 'Married', 'Taken'])
