@@ -81,6 +81,7 @@ def insert_voice_embedding(user_id, voice_embedding):
     conn.close()
 
 
+# Extract audio embeddings and enhance them
 def enhance_audio_to_blob(audio_bytes):
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
         tmp_file.write(audio_bytes)
@@ -106,6 +107,7 @@ def enhance_audio_to_blob(audio_bytes):
     return audio_blob
 
 
+# Calculate age from date of birth
 def dob_to_age(date_of_birth):
     if type(date_of_birth) is str:
         date_of_birth = datetime.datetime.strptime(date_of_birth, "%Y-%m-%d")
@@ -120,6 +122,7 @@ def dob_to_age(date_of_birth):
         return round(age_.days/365)
 
 
+# Open picture
 def open_picture(image_name):
     cwd = os.path.dirname(__file__)
     image_path = os.path.join(cwd, "images", image_name)
@@ -129,6 +132,7 @@ def open_picture(image_name):
     return images
 
 
+# Find the best matching user from dB
 def find_best_matching_user(input_audio_blob, recognizer):
     # Extract embedding for the input audio
     input_embedding = enhance_audio_to_blob(input_audio_blob)
@@ -164,6 +168,7 @@ def find_best_matching_user(input_audio_blob, recognizer):
     return best_user_id, best_score, prediction
 
 
+# Show the result of the user extraction from dB
 def show_result(user_id):
     connection = create_connection()
     cursor = connection.cursor()
@@ -178,6 +183,7 @@ def show_result(user_id):
     return execute_rows
 
 
+# Randomly generated sentences for audio recording
 def test_train_sentences():
     sentences = ["The Greeks used to imagine that it was a sign from the gods to foretell war",
                  "The Norsemen considered the rainbow as a bridge over which the gods passed",
