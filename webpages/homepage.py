@@ -9,12 +9,10 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-st.title("G.L.K Voice verification Portal")
+st.title("Voice Identification Web App")
 st.markdown(f"""
 <img style="border: 2px solid powderblue" src="data:image/jpeg;base64,{open_picture("voice.jpg")}" width="80%"><br>
 """, unsafe_allow_html=True)
-
-st.text("Required for the fulfillment of the Higher National Diploma (HND) certification")
 
 st.markdown("""
 ## Overview
@@ -71,8 +69,4 @@ These embeddings serve as the unique voiceprint for each user.
 ### Database Storage and Retrieval
 The extracted embeddings are stored in a SQLite database as binary blobs. Upon verification, embeddings are retrieved 
 and compared to new input embeddings to confirm the user’s identity.
-
-
-`Yaba college of Technology` &copy; `Created by team G.L.K. 2024` 
-
 """, unsafe_allow_html=True)
