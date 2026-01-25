@@ -9,8 +9,16 @@ import base64
 import os
 import io
 import logging
-from speechbrain.inference import SpectralMaskEnhancement
-from tensorflow.keras.models import load_model
+import torch
+from scipy import signal
+import streamlit as st
+
+try:
+    from tensorflow.keras.models import load_model
+
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 SPOOF_MODEL = None
-SPOOF_THRESHOLD = 0.5  # Adjust based on your validation results
+SPOOF_THRESHOLD = 0.5
 MFCC_PARAMS = {
     'sr': 16000,
     'n_mfcc': 40,
@@ -34,7 +42,7 @@ def load_spoof_model(model_path):
     Load the trained LSTM spoof detection model once at startup.
 
     Args:
-        model_path (str): Path to the saved Keras model (.h5 or .keras file)
+        model_path (str): Path to the saved Keras model (.keras file)
 
     Returns:
         bool: True if model loaded successfully
@@ -45,13 +53,17 @@ def load_spoof_model(model_path):
         logger.info("Spoof model already loaded, using cached version")
         return True
 
+    if not TENSORFLOW_AVAILABLE:
+        logger.warning("TensorFlow not available, spoof detection will be disabled")
+        return False
+
     try:
         if not os.path.exists(model_path):
-            logger.error(f"Model file not found at {model_path}")
+            logger.error(f"Spoof model file not found at {model_path}")
             return False
 
         SPOOF_MODEL = load_model(model_path)
-        logger.info(f"Spoof detection model loaded successfully from {model_path}")
+        logger.info(f"✅ Spoof detection model loaded successfully from {model_path}")
         return True
 
     except Exception as e:
@@ -60,8 +72,10 @@ def load_spoof_model(model_path):
 
 
 def set_spoof_threshold(threshold):
-    """Set the spoof detection threshold (0-1)."""
+    """Set the spoof detection threshold (0-1). Higher = stricter."""
     global SPOOF_THRESHOLD
+    if not 0 <= threshold <= 1:
+        raise ValueError("Threshold must be between 0 and 1")
     SPOOF_THRESHOLD = threshold
     logger.info(f"Spoof detection threshold set to {threshold}")
 
@@ -82,7 +96,6 @@ def extract_mfcc_features(audio_bytes):
     max_pad_len = MFCC_PARAMS['max_pad_len']
 
     try:
-        # Write bytes to temporary file for librosa to load
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
             tmp_file.write(audio_bytes)
             tmp_file_path = tmp_file.name
@@ -114,7 +127,7 @@ def extract_mfcc_features(audio_bytes):
 
 def detect_spoof(audio_bytes):
     """
-    Detect if audio is spoofed or genuine.
+    Detect if audio is spoofed or genuine using trained LSTM model.
 
     Args:
         audio_bytes (bytes): Raw audio data
@@ -125,12 +138,12 @@ def detect_spoof(audio_bytes):
             'confidence': float (0-1),
             'label': str ('genuine' or 'spoof')
         }
-        or None if detection fails
+        or None if detection is unavailable/fails
     """
     global SPOOF_MODEL, SPOOF_THRESHOLD
 
     if SPOOF_MODEL is None:
-        logger.warning("Spoof model not loaded, skipping spoof detection")
+        logger.warning("⚠️ Spoof model not loaded, skipping spoof detection")
         return None
 
     try:
@@ -138,7 +151,7 @@ def detect_spoof(audio_bytes):
         mfccs = extract_mfcc_features(audio_bytes)
 
         if mfccs is None:
-            logger.error("Failed to extract MFCC features")
+            logger.error("Failed to extract MFCC features for spoof detection")
             return None
 
         # Add batch dimension: (40, 200) → (1, 40, 200)
@@ -156,12 +169,123 @@ def detect_spoof(audio_bytes):
             'label': 'spoof' if is_spoof else 'genuine'
         }
 
-        logger.info(f"Spoof detection: {result['label']} (confidence: {result['confidence']:.4f})")
+        logger.info(f"Spoof detection result: {result['label']} (confidence: {result['confidence']:.4f})")
         return result
 
     except Exception as e:
-        logger.error(f"Spoof detection failed: {str(e)}")
+        logger.error(f"Spoof detection inference failed: {str(e)}")
         return None
+
+
+# ============================================================================
+# AUDIO ENHANCEMENT
+# ============================================================================
+
+@st.cache_resource
+def load_enhancement_model():
+    """Load the enhancement model once and cache it."""
+    try:
+        from speechbrain.inference.enhancement import SpectralMaskEnhancement
+
+        logger.info("Loading SpectralMaskEnhancement model...")
+        model = SpectralMaskEnhancement.from_hparams(
+            source="speechbrain/metricgan-plus-voicebank",
+            savedir="pretrained_models/metricgan-plus-voicebank",
+            run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"}
+        )
+        logger.info("✅ Enhancement model loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load enhancement model: {e}")
+        return None
+
+
+def simple_noise_reduction(audio, sr, noise_duration=1.0):
+    """Fallback: Simple noise reduction using spectral gating."""
+    noise_sample_count = int(sr * noise_duration)
+    noise_profile = np.mean(np.abs(audio[:noise_sample_count]))
+
+    threshold = noise_profile * 1.5
+    mask = np.abs(audio) > threshold
+    smoothed_mask = signal.medfilt(mask.astype(float), kernel_size=5)
+    reduced_audio = audio * smoothed_mask
+
+    return reduced_audio
+
+
+def enhance_audio_to_blob(audio_bytes):
+    """
+    Enhance audio by removing noise using MetricGAN+ model.
+    Falls back to simple noise reduction if model loading fails.
+
+    Args:
+        audio_bytes (bytes): Raw audio data from streamlit
+
+    Returns:
+        bytes: Enhanced audio as WAV bytes
+    """
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+        tmp_file.write(audio_bytes)
+        tmp_file_path = tmp_file.name
+
+    try:
+        # Try to load and use the enhancement model
+        model = load_enhancement_model()
+
+        if model is not None:
+            try:
+                logger.info("Enhancing audio with MetricGAN+...")
+                with torch.no_grad():
+                    enhanced_speech = model.enhance_file(tmp_file_path)
+
+                # Convert to bytes
+                buffer = io.BytesIO()
+                torchaudio.save(
+                    buffer,
+                    enhanced_speech.view(1, -1),
+                    16000,
+                    format="wav"
+                )
+                audio_blob = buffer.getvalue()
+                logger.info("✅ Audio enhanced successfully with MetricGAN+")
+                return audio_blob
+
+            except Exception as e:
+                logger.warning(f"MetricGAN+ enhancement failed: {e}. Using fallback method.")
+                # Fallback to simple noise reduction
+                audio, sr = torchaudio.load(tmp_file_path)
+                audio_np = audio.numpy().flatten()
+                reduced_audio = simple_noise_reduction(audio_np, sr)
+
+                buffer = io.BytesIO()
+                reduced_tensor = torch.FloatTensor(reduced_audio).unsqueeze(0)
+                torchaudio.save(buffer, reduced_tensor, sr, format="wav")
+                logger.info("✅ Audio enhanced with fallback noise reduction")
+                return buffer.getvalue()
+        else:
+            logger.info("Enhancement model not available. Using fallback noise reduction.")
+            audio, sr = torchaudio.load(tmp_file_path)
+            audio_np = audio.numpy().flatten()
+            reduced_audio = simple_noise_reduction(audio_np, sr)
+
+            buffer = io.BytesIO()
+            reduced_tensor = torch.FloatTensor(reduced_audio).unsqueeze(0)
+            torchaudio.save(buffer, reduced_tensor, sr, format="wav")
+            return buffer.getvalue()
+
+    except Exception as e:
+        logger.error(f"Audio enhancement error: {e}. Returning original audio.")
+        audio, sr = torchaudio.load(tmp_file_path)
+        buffer = io.BytesIO()
+        torchaudio.save(buffer, audio, sr, format="wav")
+        return buffer.getvalue()
+
+    finally:
+        if os.path.exists(tmp_file_path):
+            try:
+                os.remove(tmp_file_path)
+            except:
+                pass
 
 
 # ============================================================================
@@ -242,39 +366,6 @@ def insert_voice_embedding(user_id, voice_embedding):
 
 
 # ============================================================================
-# AUDIO PROCESSING
-# ============================================================================
-
-def enhance_audio_to_blob(audio_bytes):
-    """
-    Extract and enhance audio, returning as BLOB.
-    Uses SpectralMaskEnhancement from SpeechBrain.
-    """
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-        tmp_file.write(audio_bytes)
-        tmp_file_path = tmp_file.name
-
-    try:
-        model = SpectralMaskEnhancement.from_hparams(
-            source="speechbrain/metricgan-plus-voicebank",
-            savedir="pretrained_models/metricgan-plus-voicebank"
-        )
-
-        enhanced_speech = model.enhance_file(tmp_file_path)
-
-        # Convert to BLOB
-        buffer = io.BytesIO()
-        torchaudio.save(buffer, enhanced_speech.view(1, -1), 16000, format="wav", backend="soundfile")
-        audio_blob = buffer.getvalue()
-
-    finally:
-        if os.path.exists(tmp_file_path):
-            os.remove(tmp_file_path)
-
-    return audio_blob
-
-
-# ============================================================================
 # VOICE RECOGNITION & VERIFICATION
 # ============================================================================
 
@@ -290,13 +381,13 @@ def find_best_matching_user(input_audio_blob, recognizer):
 
     Returns:
         tuple: (best_user_id, best_score, prediction)
-               Returns (None, 0.0, False) if spoof or error
+               Returns (None, 0.0, False) if spoof detected or error
     """
 
     # STEP 1: Spoof Detection Gate
     spoof_result = detect_spoof(input_audio_blob)
 
-    if spoof_result is not None:  # Model was loaded and ran
+    if spoof_result is not None:
         if spoof_result['is_spoof']:
             logger.warning(f"🚨 SPOOF ATTACK DETECTED! Confidence: {spoof_result['confidence']:.4f}")
             return None, 0.0, False
