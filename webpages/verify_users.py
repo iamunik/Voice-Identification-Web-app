@@ -23,7 +23,7 @@ st.markdown("**Please record the following text displayed below:**")
 
 
 st.success(f"{test_train_sentences()}")
-audio_file = st.experimental_audio_input("Record or upload your audio")
+audio_file = st.audio_input("Record or upload your audio")
 
 if audio_file:
     # Find the best matching user in the database
