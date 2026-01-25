@@ -13,168 +13,9 @@ import torch
 from scipy import signal
 import streamlit as st
 
-try:
-    from tensorflow.keras.models import load_model
-
-    TENSORFLOW_AVAILABLE = True
-except ImportError:
-    TENSORFLOW_AVAILABLE = False
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# SPOOF DETECTION CONFIGURATION
-# ============================================================================
-
-SPOOF_MODEL = None
-SPOOF_THRESHOLD = 0.5
-MFCC_PARAMS = {
-    'sr': 16000,
-    'n_mfcc': 40,
-    'max_pad_len': 200
-}
-
-
-def load_spoof_model(model_path):
-    """
-    Load the trained LSTM spoof detection model once at startup.
-
-    Args:
-        model_path (str): Path to the saved Keras model (.keras file)
-
-    Returns:
-        bool: True if model loaded successfully
-    """
-    global SPOOF_MODEL
-
-    if SPOOF_MODEL is not None:
-        logger.info("Spoof model already loaded, using cached version")
-        return True
-
-    if not TENSORFLOW_AVAILABLE:
-        logger.warning("TensorFlow not available, spoof detection will be disabled")
-        return False
-
-    try:
-        if not os.path.exists(model_path):
-            logger.error(f"Spoof model file not found at {model_path}")
-            return False
-
-        SPOOF_MODEL = load_model(model_path)
-        logger.info(f"✅ Spoof detection model loaded successfully from {model_path}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to load spoof detection model: {str(e)}")
-        return False
-
-
-def set_spoof_threshold(threshold):
-    """Set the spoof detection threshold (0-1). Higher = stricter."""
-    global SPOOF_THRESHOLD
-    if not 0 <= threshold <= 1:
-        raise ValueError("Threshold must be between 0 and 1")
-    SPOOF_THRESHOLD = threshold
-    logger.info(f"Spoof detection threshold set to {threshold}")
-
-
-def extract_mfcc_features(audio_bytes):
-    """
-    Extract MFCC features from audio bytes.
-    Matches the training preprocessing exactly.
-
-    Args:
-        audio_bytes (bytes): Raw audio data
-
-    Returns:
-        np.ndarray: MFCC features with shape (n_mfcc, max_pad_len) or None if failed
-    """
-    sr = MFCC_PARAMS['sr']
-    n_mfcc = MFCC_PARAMS['n_mfcc']
-    max_pad_len = MFCC_PARAMS['max_pad_len']
-
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_file_path = tmp_file.name
-
-        try:
-            # Load audio
-            y, _ = librosa.load(tmp_file_path, sr=sr)
-
-            # Extract MFCCs
-            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
-
-            # Pad or truncate to consistent length
-            if mfccs.shape[1] > max_pad_len:
-                mfccs = mfccs[:, :max_pad_len]
-            else:
-                pad_width = max_pad_len - mfccs.shape[1]
-                mfccs = np.pad(mfccs, pad_width=((0, 0), (0, pad_width)), mode='constant')
-
-            return mfccs
-
-        finally:
-            if os.path.exists(tmp_file_path):
-                os.remove(tmp_file_path)
-
-    except Exception as e:
-        logger.error(f"MFCC extraction failed: {str(e)}")
-        return None
-
-
-def detect_spoof(audio_bytes):
-    """
-    Detect if audio is spoofed or genuine using trained LSTM model.
-
-    Args:
-        audio_bytes (bytes): Raw audio data
-
-    Returns:
-        dict: {
-            'is_spoof': bool,
-            'confidence': float (0-1),
-            'label': str ('genuine' or 'spoof')
-        }
-        or None if detection is unavailable/fails
-    """
-    global SPOOF_MODEL, SPOOF_THRESHOLD
-
-    if SPOOF_MODEL is None:
-        logger.warning("⚠️ Spoof model not loaded, skipping spoof detection")
-        return None
-
-    try:
-        # Extract MFCC features
-        mfccs = extract_mfcc_features(audio_bytes)
-
-        if mfccs is None:
-            logger.error("Failed to extract MFCC features for spoof detection")
-            return None
-
-        # Add batch dimension: (40, 200) → (1, 40, 200)
-        features = np.expand_dims(mfccs, axis=0)
-
-        # Run inference
-        prediction = SPOOF_MODEL.predict(features, verbose=0)[0][0]
-
-        # Determine if spoof
-        is_spoof = prediction > SPOOF_THRESHOLD
-
-        result = {
-            'is_spoof': bool(is_spoof),
-            'confidence': float(prediction),
-            'label': 'spoof' if is_spoof else 'genuine'
-        }
-
-        logger.info(f"Spoof detection result: {result['label']} (confidence: {result['confidence']:.4f})")
-        return result
-
-    except Exception as e:
-        logger.error(f"Spoof detection inference failed: {str(e)}")
-        return None
 
 
 # ============================================================================
@@ -374,29 +215,14 @@ def find_best_matching_user(input_audio_blob, recognizer):
     Find the best matching user from the database.
 
     FLOW:
-    1. Check for spoof attacks (rejects if detected)
-    2. Enhance audio
-    3. Compare against all users in DB
-    4. Return best match
+    1. Enhance audio
+    2. Compare against all users in DB
+    3. Return best match
 
     Returns:
         tuple: (best_user_id, best_score, prediction)
-               Returns (None, 0.0, False) if spoof detected or error
+               Returns (None, 0.0, False) if error
     """
-
-    # STEP 1: Spoof Detection Gate
-    spoof_result = detect_spoof(input_audio_blob)
-
-    if spoof_result is not None:
-        if spoof_result['is_spoof']:
-            logger.warning(f"🚨 SPOOF ATTACK DETECTED! Confidence: {spoof_result['confidence']:.4f}")
-            return None, 0.0, False
-        else:
-            logger.info(f"✅ Audio verified as genuine. Confidence: {spoof_result['confidence']:.4f}")
-    else:
-        logger.warning("⚠️ Spoof detection unavailable, proceeding without spoof check")
-
-    # STEP 2: Audio passed spoof check, proceed with voice verification
     try:
         input_embedding = enhance_audio_to_blob(input_audio_blob)
         audio_tensor, _ = torchaudio.load(io.BytesIO(input_embedding))

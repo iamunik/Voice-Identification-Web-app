@@ -1,9 +1,8 @@
-from funcs import test_train_sentences, dob_to_age, find_best_matching_user, show_result, load_spoof_model
+from funcs import test_train_sentences, dob_to_age, find_best_matching_user, show_result
 from speechbrain.inference.speaker import SpeakerRecognition
 import streamlit as st
 import base64
 import time
-import os
 
 # Page configuration
 st.set_page_config(
@@ -12,25 +11,6 @@ st.set_page_config(
     page_icon='✅',
     initial_sidebar_state="auto"
 )
-
-
-# Initialize spoof model if available
-@st.cache_resource
-def init_spoof_detector():
-    """Initialize spoof detection model if it exists."""
-    # Navigate up one level from webpages/ to parent directory
-    import os
-    current_dir = os.path.dirname(os.path.abspath(__file__))  # webpages/
-    parent_dir = os.path.dirname(current_dir)  # parent/
-    spoof_model_path = os.path.join(parent_dir, "lstm_spoof_detector_model.keras")
-
-    if os.path.exists(spoof_model_path):
-        success = load_spoof_model(spoof_model_path)
-        return success
-    return False
-
-
-spoof_model_loaded = init_spoof_detector()
 
 
 # Initialize SpeechBrain's speaker recognition model
@@ -48,29 +28,18 @@ recognizer = load_recognizer()
 
 st.title("Verification Page")
 st.markdown("**Please record the following text displayed below:**")
-
-# Show spoof detection status
-if spoof_model_loaded:
-    st.info("✅ Spoof detection is enabled")
-else:
-    st.warning("⚠️ Spoof detection is disabled (model not found)")
-
 st.success(f"{test_train_sentences()}")
+
 audio_file = st.audio_input("Record or upload your audio")
 
 if audio_file:
     with st.spinner("Processing audio..."):
         time.sleep(1)
 
-    # Find the best matching user in the database (includes spoof detection in the flow)
+    # Find the best matching user in the database
     bestUser_id, bestScore, predict = find_best_matching_user(audio_file.getvalue(), recognizer)
 
-    if bestUser_id is None and bestScore == 0.0 and not predict:
-        # Check if it was a spoof detection failure or no match
-        st.error("❌ VERIFICATION FAILED")
-        st.error("This audio was detected as spoofed or could not be verified.")
-
-    elif bestUser_id:
+    if bestUser_id:
         with st.spinner("Checking Database"):
             time.sleep(2)
 
