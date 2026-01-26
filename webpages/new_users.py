@@ -17,7 +17,10 @@ create_tables()
 
 # Streamlit App Interface
 st.title("Voice identification Portal")
+
+# Upload Picture and Voice
 st.subheader("Register a New User")
+
 
 col1, col2 = st.columns(2)
 
@@ -40,33 +43,31 @@ with col2:
 picture_file = st.file_uploader("Upload a picture:", type=["jpg", "jpeg", "png"])
 
 voice = st.radio("How would you like to process your audio", ["Upload audio", "Record audio"])
-voice_file = None
-
 if voice == "Upload audio":
-    voice_file_upload = st.file_uploader("Upload a voice recording (WAV format):", type=["wav"])
-    if voice_file_upload:
-        with st.spinner("Enhancing audio..."):
-            voice_file = enhance_audio_to_blob(voice_file_upload.getvalue())
-        st.success("Audio enhanced successfully!")
+    voice_file = st.file_uploader("Upload a voice recording (WAV format):", type=["wav"])
+    if voice_file:
+        voice_file = enhance_audio_to_blob(voice_file.getvalue())
+    else:
+        pass
 
 else:
     st.divider()
     st.markdown("**Please record the following text displayed below:**")
     st.success(f"{test_train_sentences()}")
-    voice_file_recorded = st.audio_input('Record the text displayed above')
-    if voice_file_recorded:
-        with st.spinner("Enhancing audio..."):
-            voice_file = enhance_audio_to_blob(voice_file_recorded.getvalue())
-        st.success("Voice capture and enhancement complete!")
+    voice_file = st.experimental_audio_input('Record the text displayed above')
+    if voice_file:
+        voice_file = enhance_audio_to_blob(voice_file.getvalue())
+        st.text("Voice capture complete!!!!")
+    else:
+        pass
+
 
 submitted = st.button("Register User")
 
 try:
     if submitted:
-        # Check all required fields
         if all((first_name, other_name, last_name, dob, phone, about, sex, occupation,
-                marital_status, picture_file, voice_file)):
-
+                marital_status, picture_file, voice_file[0])):
             # Save the uploaded picture as BLOB
             picture_data = picture_file.read()
 
@@ -77,16 +78,14 @@ try:
             # Insert into voice_db
             insert_voice_embedding(user_id, voice_file)
 
-            with st.spinner("Registering..."):
-                time.sleep(2)
+            with st.spinner("Registering"):
+                time.sleep(3)
 
-            st.success(f"✅ User {first_name} {last_name} registered successfully!")
-            st.balloons()
+            st.success(f"User {first_name} registered successfully!")
 
             # Refresh the page after user registers
-            time.sleep(2)
             streamlit_js_eval(js_expressions="parent.window.location.reload()")
         else:
             st.error("Please fill in all fields and upload both picture and voice.")
-except Exception as e:
-    st.error(f"Registration error: {str(e)}")
+except TypeError:
+    st.error("Please fill the form appropriately.")
