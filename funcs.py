@@ -7,6 +7,19 @@ import random
 import base64
 import os
 import io
+import requests
+
+# spoof detection
+SPOOF_API_URL = "https://iamunik-spoof-detector.hf.space/detect-spoof"
+
+
+def is_spoof(audio_bytes):
+    files = {
+        "file": ("audio.wav", io.BytesIO(audio_bytes), "audio/wav")
+    }
+    response = requests.post(SPOOF_API_URL, files=files, timeout=60)
+    response.raise_for_status()
+    return response.json()
 
 
 # Connect to the database

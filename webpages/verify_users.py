@@ -1,8 +1,9 @@
-from funcs import test_train_sentences, dob_to_age, find_best_matching_user, show_result
+from funcs import test_train_sentences, dob_to_age, find_best_matching_user, show_result, is_spoof
 from speechbrain.inference.speaker import SpeakerRecognition
 import streamlit as st
 import base64
 import time
+# import requests
 
 # Page configuration
 st.set_page_config(
@@ -23,11 +24,39 @@ st.markdown("**Please record the following text displayed below:**")
 
 
 st.success(f"{test_train_sentences()}")
-audio_file = st.experimental_audio_input("Record or upload your audio")
+audio_file = st.audio_input("Record or upload your audio")
 
 if audio_file:
-    # Find the best matching user in the database
-    bestUser_id, bestScore, predict = find_best_matching_user(audio_file.getvalue(), recognizer)
+    with st.spinner("Running spoof detection..."):
+        spoof_result = is_spoof(audio_file.getvalue())
+
+    # Display results with st.metric
+    st.subheader("🎯 Spoof Detection Result")
+    col1, col2 = st.columns(2)
+
+    # Left column: Prediction and Confidence
+    with col1:
+        st.metric(label="Prediction", value=spoof_result["prediction"])
+        st.metric(label="Confidence", value=f"{spoof_result['confidence']*100:.1f}%")
+
+    # Right column: Spoof probability and Risk Level
+    with col2:
+        st.metric(label="Spoof Probability", value=f"{spoof_result['spoof_probability']*100:.1f}%")
+        st.metric(label="Risk Level", value=spoof_result["risk_level"])
+
+    # Conditional alert
+    if spoof_result["prediction"] == "SPOOF":
+        st.error("🚨 Spoofed or synthetic voice detected!")
+        st.stop()  # Stop further processing
+    else:
+        st.success("✅ Voice passed spoof detection")
+
+    # SAFE → continue with ECAPA
+    bestUser_id, bestScore, predict = find_best_matching_user(
+        audio_file.getvalue(),
+        recognizer
+    )
+
     if bestUser_id:
         with st.spinner("Checking Database"):       # Aesthetics
             time.sleep(2)

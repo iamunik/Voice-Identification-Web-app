@@ -54,7 +54,7 @@ else:
     st.divider()
     st.markdown("**Please record the following text displayed below:**")
     st.success(f"{test_train_sentences()}")
-    voice_file = st.experimental_audio_input('Record the text displayed above')
+    voice_file = st.audio_input('Record the text displayed above')
     if voice_file:
         voice_file = enhance_audio_to_blob(voice_file.getvalue())
         st.text("Voice capture complete!!!!")
